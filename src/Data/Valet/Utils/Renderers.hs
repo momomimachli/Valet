@@ -10,30 +10,35 @@ Stability   : experimental
 Portability : portable
 -}
 module Data.Valet.Utils.Renderers
-    ( Vte(..)
+    ( Vame(..)
     , Errors
     ) where
 
+import Data.Monoid
 import qualified Data.Map.Strict as M
 import qualified Data.Text       as T
 
 {-|
-View, transformer and error renderer.
+View, analysis, modifications and error renderer.
 
 This renderer is an empty container which can then be filled in with concrete
 implementation of each of the components.
 -}
-data Vte v t e = Vte
-    { _view        :: Maybe v
-    , _transformer :: Maybe t
-    , _error       :: Maybe e
+data Vame v a m e b = Vame
+    { _view     :: v
+    , _analysis :: a
+    , _modif    :: m
+    , _error    :: e
+    , _value    :: b
     }
 
-instance (Monoid v, Monoid t, Monoid e) => Monoid (Vte v t e) where
-    mempty = Vte Nothing Nothing Nothing
+instance (Monoid v, Monoid a, Monoid m, Monoid e, Monoid b) =>
+    Monoid (Vame v a m e b) where
 
-    mappend (Vte v1 t1 e1) (Vte v2 t2 e2) =
-        Vte (mappend v1 v2) (mappend t1 t2) (mappend e1 e2)
+    mempty = Vame mempty mempty mempty mempty mempty
+
+    mappend (Vame v1 a1 m1 e1 x1) (Vame v2 a2 m2 e2 x2) =
+        Vame (v1 <> v2) (a1 <> a2) (m1 <> m2) (e1 <> e2) (x1 <> x2)
 
 {-|
 Simple renderer for errors as a strict Map.
@@ -45,5 +50,4 @@ type Errors = M.Map T.Text [T.Text]
 
 instance Monoid Errors where
     mempty = M.empty
-
     mappend = M.unionWith (++)

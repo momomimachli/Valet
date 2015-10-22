@@ -14,7 +14,7 @@ Portability : portable
 
 Generic 'read' function which can be used for any value.
 
-All you need to ensure is 'Read' instance for the given value.
+All you need to ensure is a 'Read' instance for the given value.
 The 'String' value will then be converted to the type of the value.
 
 Values can be then defined such as:

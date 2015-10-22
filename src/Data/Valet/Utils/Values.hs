@@ -30,11 +30,14 @@ module Data.Valet.Utils.Values
 
       -- * Monads
       -- | Generic base for types which are instances of Monads.
-      maybeValue, listValue,
+      maybeValet, listValet,
 
-      check, isNoLongerThan, isLongerThan
+      -- * Analysis
+      -- Basic analysis
+      isNoLongerThan, isLongerThan
     ) where
 
+import Control.Lens
 import Data.Valet
 
 import qualified Data.Valet.Utils.Reader as R
@@ -44,54 +47,50 @@ import qualified Data.Text as T
 -- GENERIC
 --------------------------------------------------------------------------------
 
--- | Value for which the "reader" is an instance of the 'Readable' class.
-readable :: R.Readable b a => a -> T.Text -> Value r m b a
-readable val name = reader R.read $ value name val
+-- | Value for which the "renderer" is an instance of the 'Readable' class.
+readable :: (Monoid r, Monad m, R.Readable r a) => a -> T.Text -> Valet r m a
+readable val k = valet val
+    & reader .~ R.read
+    & key    .~ k
 
 --------------------------------------------------------------------------------
 -- BASICS
 --------------------------------------------------------------------------------
 
 -- | Text value with default value set to @""@.
-text :: R.Readable b T.Text => T.Text -> Value r m b T.Text
+text :: (Monoid r , Monad m, R.Readable r T.Text) => T.Text -> Valet r m T.Text
 text = readable ""
 
 -- | Integer value with default value set to 0.
-int :: R.Readable b Int => T.Text -> Value r m b Int
+int :: (Monoid r , Monad m, R.Readable r Int) => T.Text -> Valet r m Int
 int = readable 0
 
 -- | Double value with default value set to 0.
-double :: R.Readable b Double => T.Text -> Value r m b Double
+double :: (Monoid r , Monad m, R.Readable r Double) => T.Text -> Valet r m Double
 double = readable 0
 
 -- | Bool value with default value set to @False@.
-bool :: R.Readable b Bool => T.Text -> Value r m b Bool
+bool :: (Monoid r , Monad m, R.Readable r Bool) => T.Text -> Valet r m Bool
 bool = readable False
 
 -- | Char value with default value set to @' '@.
-char :: R.Readable b Char => T.Text -> Value r m b Char
+char :: (Monoid r , Monad m, R.Readable r Char) => T.Text -> Valet r m Char
 char = readable ' '
 
 -- | Optional value with default value set to @Nothing@.
-maybeValue :: R.Readable b (Maybe a) => T.Text -> Value r m b (Maybe a)
-maybeValue = readable Nothing
+maybeValet ::
+       (Monoid r , Monad m, R.Readable r (Maybe a))
+    => T.Text
+    -> Valet r m (Maybe a)
+maybeValet = readable Nothing
 
 -- | List value with default value set to the empty list (@[]@).
-listValue :: R.Readable b [a] => T.Text -> Value r m b [a]
-listValue = readable []
+listValet :: (Monoid r , Monad m, R.Readable r [a]) => T.Text -> Valet r m [a]
+listValet = readable []
 
 --------------------------------------------------------------------------------
--- CHECKS
+-- Analysis
 --------------------------------------------------------------------------------
-
-{-|
-Build a boolean transformer.
-
-If the boolean function returns 'True', 'Success' is returned, otherwise
-a 'Failure' is returned with the provided error.
--}
-check :: Monad m => (a -> Bool) -> r -> Maybe r -> Mapper r m a
-check g e r = Mapper (\x -> return $ if g x then Success x else Failure e) r
 
 {-|
 Maximal length for a text.
