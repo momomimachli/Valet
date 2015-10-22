@@ -10,7 +10,7 @@ Stability   : experimental
 Portability : portable
 -}
 module Data.Valet.Utils.Renderers
-    ( Mvce(..)
+    ( Vte(..)
     , Errors
     ) where
 
@@ -18,23 +18,22 @@ import qualified Data.Map.Strict as M
 import qualified Data.Text       as T
 
 {-|
-Model, view, controller and error renderer.
+View, transformer and error renderer.
 
 This renderer is an empty container which can then be filled in with concrete
 implementation of each of the components.
 -}
-data Mvce m v c e = Mvce
-    { _model      :: Maybe m
-    , _view       :: Maybe v
-    , _controller :: Maybe c
-    , _errors     :: Maybe e
+data Vte v t e = Vte
+    { _view        :: Maybe v
+    , _transformer :: Maybe t
+    , _error       :: Maybe e
     }
 
-instance (Monoid m, Monoid v, Monoid c, Monoid e) => Monoid (Mvce m v c e) where
-    mempty = Mvce Nothing Nothing Nothing Nothing
+instance (Monoid v, Monoid t, Monoid e) => Monoid (Vte v t e) where
+    mempty = Vte Nothing Nothing Nothing
 
-    mappend (Mvce m1 v1 c1 e1) (Mvce m2 v2 c2 e2) =
-        Mvce (mappend m1 m2) (mappend v1 v2) (mappend c1 c2) (mappend e1 e2)
+    mappend (Vte v1 t1 e1) (Vte v2 t2 e2) =
+        Vte (mappend v1 v2) (mappend t1 t2) (mappend e1 e2)
 
 {-|
 Simple renderer for errors as a strict Map.

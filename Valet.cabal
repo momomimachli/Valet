@@ -15,11 +15,16 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Data.Valet,
-                       Data.Valet.Utils.Renderers
+                       Data.Valet.Utils.Reader,
+                       Data.Valet.Utils.Renderers,
+                       Data.Valet.Utils.Values
   -- other-modules:
   other-extensions:    FlexibleInstances, GADTs, OverloadedStrings
-  build-depends:       base >=4.8 && <4.9,
-                       containers,
-                       text >=1.2 && <1.3
+  build-depends:       base >=4.8 && <4.9
+                     , containers
+                     , lens
+                     , mtl >= 2.2.1
+                     , text >=1.2 && <1.3
+                     , transformers >= 0.4.2.0
   hs-source-dirs:      src
   default-language:    Haskell2010
