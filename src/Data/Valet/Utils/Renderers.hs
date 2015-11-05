@@ -47,7 +47,3 @@ All the errors of a given 'Value' will be reported under the same
 key of the Map.
 -}
 type Errors = M.Map T.Text [T.Text]
-
-instance Monoid Errors where
-    mempty = M.empty
-    mappend = M.unionWith (++)

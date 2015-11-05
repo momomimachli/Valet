@@ -26,7 +26,7 @@ module Data.Valet.Utils.Values
 
       -- * Basics
       -- | Basic value types.
-      text, int, double, char, bool,
+      text, int, integer, double, char, bool,
 
       -- * Monads
       -- | Generic base for types which are instances of Monads.
@@ -61,9 +61,16 @@ readable val k = valet val
 text :: (Monoid r , Monad m, R.Readable r T.Text) => T.Text -> Valet r m T.Text
 text = readable ""
 
--- | Integer value with default value set to 0.
+-- | Fixed precision integer 'Valet' with default value set to 0.
 int :: (Monoid r , Monad m, R.Readable r Int) => T.Text -> Valet r m Int
 int = readable 0
+
+-- | Arbitrary precision integer 'Valet' with default value set to 0.
+integer ::
+       (Monoid r , Monad m, R.Readable r Integer)
+    => T.Text
+    -> Valet r m Integer
+integer = readable 0
 
 -- | Double value with default value set to 0.
 double :: (Monoid r , Monad m, R.Readable r Double) => T.Text -> Valet r m Double

@@ -110,7 +110,9 @@ module Data.Valet
       Valet
     , SomeValet
     , Analysis
+    , RAnalysis
     , Modif
+    , RModif
     , Result(..)
     , Coerce
 
@@ -131,9 +133,14 @@ module Data.Valet
     , value
     , key
     , analyser
+    , rAnalyser
     , modifier
+    , rModifier
     , reader
     , renderer
+
+      -- ** Indexed lenses
+    , keyi
 
       -- * Getters
 
@@ -141,6 +148,8 @@ module Data.Valet
       --   to modify or set them.
     , eval
     , render
+    , lookup
+    , renderSubValets
     ) where
 
 import Control.Applicative ((<|>))
@@ -206,7 +215,7 @@ data Valet r m a where
     Key :: T.Text -> Valet r m a -> Valet r m a
 
     -- | Add a renderer to a valet.
-    Render :: (Valet r m a -> r) -> Valet r m a -> Valet r m a
+    Render :: Rendered r m a -> Valet r m a -> Valet r m a
 
     -- | Convert a renderer to a value.
     Read :: (r -> a) -> Valet r m a -> Valet r m a
@@ -215,7 +224,7 @@ data Valet r m a where
     Modify :: Modif m a -> Valet r m a -> Valet r m a
 
     -- | Add a analyser to a valet.
-    Analyse :: Analysis m a (Maybe r) -> Valet r m a -> Valet r m a
+    Analyse ::  Analysis r m a -> Valet r m a -> Valet r m a
 
     -- | Applicative transformation. This allows to combine valets in a given
     --   data-type in an applicative style.
@@ -244,9 +253,9 @@ type instance Index (Valet r m a) = T.Text
 type instance IxValue (Valet r m a) = r
 
 instance (Monad m, Monoid r) => Ixed (Valet r m a) where
-    ix k f v = case renderKey k v of
-        Just r  -> f r <&> \r' -> putValue k v r'
-        Nothing -> pure v
+    ix k f sv = case lookup k sv of
+        Just v  -> f (v ^. render) <&> \v' -> putValue k sv v'
+        Nothing -> pure sv
 
 {-|
 Allows to use the 'at' lens to set or view values using their key.
@@ -255,7 +264,7 @@ instance (Monad m, Monoid r) => At (Valet r m a) where
     at k f v = f vr <&> \r -> case r of
         Nothing -> v
         Just r' -> putValue k v r'
-        where vr = renderKey k v
+        where vr = fmap (view render) $ v ^. to (lookup k)
 
 {-|
 Value agnostic valet.
@@ -303,7 +312,8 @@ instance (Monad m, Monoid r) => Ixed (SomeValet r m) where
         Nothing -> pure sv
 
 {-|
-Allows to use the 'at' lens to set or view values using their key.
+Allows to use the 'at' lens to set or view value agnostics valets using
+their key.
 -}
 instance (Monad m, Monoid r) => At (SomeValet r m) where
     at k f v = f vr <&> \r -> case r of
@@ -334,6 +344,14 @@ instance Coerce (SomeValet r m) (SomeValet r m) where
     coerce = id
 
 {-|
+Type synonym for a function turning a 'Valet' to a rendered value @r@.
+
+Having such type allow to the rendered value to access all the 'Valet's
+parameters.
+-}
+type Rendered r m a = Valet r m a -> r
+
+{-|
 * Conceptual meaning
 An analysis encapsulates in a newtype a monadic function.
 It is therefore a 'Kleisli'.
@@ -343,11 +361,15 @@ acts at the value level, @b@ must also be a monoid.
 
 * Use by the valet library
 
-In practice in this library the type @b@ is @Maybe r@ meaning that
+In practice in this library the type @r@ is @Maybe (Rendered r)@ meaning that
 from the value @a@ of the 'Valet' we might get a rendering @r@.
 
 This type @r@ can be seen as the report of the analysis. It takes a value,
 it analyses it and it produces a report (if there is something to report).
+
+This rendering is actually not a value but a function which takes the 'Valet'
+as parameter. That way, the rendering can access the data of the 'Valet'
+such as its key.
 
 Thanks to its 'Monoid' instance it's easy to combine various analysis into
 one:
@@ -360,8 +382,12 @@ The results of those different analyisis will be combined as a monoid.
 A concrete example of an analysis is the validation of the value of a form.
 The user submits a form, the value of a given field gets analysed and errors
 get reported if any.
+
+-- TODO: update doc.
 -}
-newtype Analysis m a b = Analysis {runAnalysis :: a -> m b}
+type Analysis r m a = KleisliMonoid m a (Maybe (Rendered r m a))
+
+newtype KleisliMonoid m a b = KleisliMonoid {runKleisliMonoid :: a -> m b}
 
 {-|
 * Conceptual meaning
@@ -389,17 +415,16 @@ Imagine you want a last name in upper case, you could have filters to:
 newtype Modif m a = Modif {runModif :: a -> m a}
 
 {-|
-For 'mappend', this instance returns a new 'Analysis' which function append
-the results of both 'Analysis'' functions.
+For 'mappend', this instance returns a new 'KleisliMonoid' which function append
+the results of both 'KleisliMonoid'' functions.
 -}
-instance (Monad m, Monoid b) => Monoid (Analysis m a b) where
-    mempty = Analysis (\_ -> return mempty)
-    mappend k1 k2 =
-        Analysis g
+instance (Monad m, Monoid b) => Monoid (KleisliMonoid m a b) where
+    mempty = KleisliMonoid (\_ -> return mempty)
+    mappend k1 k2 = KleisliMonoid g
         where
             g x = do
-               r1 <- runAnalysis k1 x
-               r2 <- runAnalysis k2 x
+               r1 <- runKleisliMonoid k1 x
+               r2 <- runKleisliMonoid k2 x
                return (r1 <> r2)
 
 {-|
@@ -459,8 +484,8 @@ someValet = Data.Valet.coerce
 {-|
 Create an analysis from the provided function.
 -}
-analysis :: (a -> m b) -> Analysis m a b
-analysis = Analysis
+analysis :: (a -> m (Maybe (Rendered r m a))) -> Analysis r m a
+analysis = KleisliMonoid
 
 {-|
 Create a modification from the provided function.
@@ -481,7 +506,7 @@ value we can write:
 
 TODO: check the validity of the example.
 -}
-check :: Monad m => (a -> m Bool) -> r -> Analysis m a (Maybe r)
+check :: Monad m => (a -> m Bool) -> Rendered r m a -> Analysis r m a
 check g e = analysis $ \x -> do
     check <- g x
     if check then return Nothing else return $ Just e
@@ -550,11 +575,7 @@ Set the analyser of the provided 'Valet'.
 * Note
 This will replace the previously existing analyse function of the 'Valet'.
 -}
-setAnalyser ::
-       Monad m
-    => Valet r m a
-    -> Analysis m a (Maybe r)
-    -> Valet r m a
+setAnalyser :: Monad m => Valet r m a -> Analysis r m a -> Valet r m a
 setAnalyser (Analyse _ v) c = Analyse c v
 setAnalyser (Value x) c     = Analyse c (Value x)
 setAnalyser (Apply g v) c   = Analyse c (Apply g v)
@@ -606,7 +627,7 @@ setRenderer v g            = setter setRenderer v g
 
 -- | Generic getter for 'Valet'.
 getter :: Valet r m a -> Valet r m a
-getter (Key _ v)    = v
+getter (Key _ v)     = v
 getter (Read _ v)    = v
 getter (Render _ v)  = v
 getter (Modify _ v)  = v
@@ -621,7 +642,7 @@ getValue (Apply g v)  = getValue g (getValue v)
 getValue v            = getValue $ getter v
 
 -- | Return the analyser of a 'Valet'.
-getAnalyser :: (Monoid r, Monad m) => Valet r m a -> Analysis m a (Maybe r)
+getAnalyser :: (Monoid r, Monad m) => Valet r m a -> Analysis r m a
 getAnalyser (Value _)     = mempty
 getAnalyser (Apply g v)   = mempty
 getAnalyser (Analyse g _) = g
@@ -654,14 +675,10 @@ applying on it the modification and analysis which have been previously set.
 eval :: (Monad m, Monoid r) => Getter (Valet r m a) (m (Result r a))
 eval = to $ \x -> case x of
     Value v     -> return $ Success v
-    Modify g v  -> do
-                       val    <- runModif g $ getValue v
-                       report <- runAnalysis (getAnalyser v) $ val
-                       return $ result val report
-    Analyse g v -> do
-                       val    <- runModif (getModifier v) $ getValue v
-                       report <- runAnalysis g $ val
-                       return $ result val report
+    v@(Key k _) -> do
+                       val <- runModif (v ^. modifier) $ v ^. value
+                       report <- runKleisliMonoid (v ^. analyser) $ val
+                       return $ result val (report <*> pure v)
     Apply g v   -> do
                        r1 <- g ^. eval
                        r2 <- v ^. eval
@@ -735,34 +752,31 @@ Render a value and its sub-values.
 render :: (Coerce b (SomeValet r m), Monoid r) => Getter b r
 render = to $ \sv -> case Data.Valet.coerce sv of
     SomeValet (Value _)    -> mempty
-    SomeValet v@(Key x v') -> (v' ^. renderer) v <> v' ^. render
+    SomeValet v@(Key x v') -> (v' ^. renderer) v
+    SomeValet (Render g v) -> g v
     SomeValet (Apply g v)  -> g ^. render <> v ^. render
     v                      -> (view render) $ sGetter v
+
+{-|
+Render the sub-valets of a 'Valet' but not the 'Valet' itself.
+-}
+renderSubValets :: (Coerce b (SomeValet r m), Monoid r) => Getter b r
+renderSubValets = to $ \sv -> case Data.Valet.coerce sv of
+    SomeValet (Value _)   -> mempty
+    SomeValet (Apply g v) -> g ^. render <> v ^. render
+    v                     -> (view renderSubValets) $ sGetter v
 
 -- | Lookup for a valet returning a value agnostic valet.
 lookup :: Coerce b (SomeValet r m) => T.Text -> b -> Maybe (SomeValet r m)
 lookup k s = case Data.Valet.coerce s of
     SomeValet (Value _)      -> Nothing
-    v@(SomeValet (Key x v')) -> if k == x then Just v else Nothing
+    v@(SomeValet (Key x v')) -> if k == x then Just v else lookup k v'
     SomeValet (Read _ v)     -> lookup k (SomeValet v)
     SomeValet (Render _ v)   -> lookup k (SomeValet v)
     SomeValet (Modify _ v)   -> lookup k (SomeValet v)
     SomeValet (Analyse _ v)  -> lookup k (SomeValet v)
     SomeValet (Apply g v)    ->    lookup k (SomeValet g)
                                <|> lookup k (SomeValet v)
-
-{-|
-Render the value matching the given key.
--}
-renderKey :: (Coerce b (SomeValet r m), Monoid r) => T.Text -> b -> Maybe r
-renderKey k sv = case Data.Valet.coerce sv of
-    SomeValet (Value _)          -> Nothing
-    v@(SomeValet v'@(Key x v'')) -> if k == x
-                                    then Just $ (v'' ^. renderer) v'
-                                             <> v ^. render
-                                    else Nothing
-    SomeValet (Apply g v)        -> renderKey k g <> renderKey k v
-    x                            -> renderKey k (sGetter x)
 
 {-|
 Get all the keys of a 'Valet' and its sub-valets.
@@ -811,7 +825,7 @@ Key of a valet.
 This key should be unique as it can be used for interacting with the sub-valets
 contained in a valet.
 
-To ensure this, you can use the 'keys' function.
+To ensure this, you can use the 'keys' function or 'keyi' lens.
 -}
 key :: (Monoid r, Monad m) => Lens' (Valet r m a) T.Text
 key = lens getKey setKey
@@ -821,7 +835,7 @@ Analysis of a value.
 -}
 analyser ::
        (Monad m, Monoid r)
-    => Lens' (Valet r m a) (Analysis m a (Maybe r))
+    => Lens' (Valet r m a) (Analysis r m a)
 analyser = lens getAnalyser setAnalyser
 
 -- | Modification of a value.
@@ -854,8 +868,8 @@ data Renderer = Renderer
 renderer :: Monoid r => Lens' (Valet r m a) (Valet r m a -> r)
 renderer = lens getRenderer setRenderer
 
-type RAnalysis r m a = (Analysis m a (Maybe r), Valet r m a -> r)
-type RModifier r m a = (Modif m a, Valet r m a -> r)
+type RAnalysis r m a = (Analysis r m a, Valet r m a -> r)
+type RModif r m a = (Modif m a, Valet r m a -> r)
 
 {-|
 Lens combining in a tuple an analysis and a rendering (expected to be the
@@ -870,14 +884,47 @@ rAnalyser = lens
 Lens combining in a tuple a modifier and a rendering (expected to be the
 rendering of the modifier).
 -}
-rModifier :: (Monad m, Monoid r) => Lens' (Valet r m a) (RModifier r m a)
+rModifier :: (Monad m, Monoid r) => Lens' (Valet r m a) (RModif r m a)
 rModifier = lens
     (\x -> (getModifier x, getRenderer x))
     (\z (x, y) -> setModifier (setRenderer z y) x)
 
 ----------------------------------------
+-- Indexed lenses
+----------------------------------------
+
+{-|
+Key of a sub-valet.
+
+This lens can be used to modify the current key or to check if a given
+key exists.
+
+-- TODO: examples.
+-}
+keyi ::
+       (Monoid r, Monad m)
+    => T.Text                     -- ^ Key of the key.
+    -> Lens' (Valet r m a) T.Text
+keyi k = lens (\x -> x ^. to (lookup k) . _Just . to getKey) (putKey k)
+
+
+----------------------------------------
 -- Indexed Setters
 ----------------------------------------
+
+{-|
+Replace the key of the sub-value matching the provided key, so the
+current key will be replaced by the new one.
+-}
+putKey ::
+       T.Text -- ^ Current key.
+    -> Valet r m a
+    -> T.Text -- ^ New key.
+    -> Valet r m a
+putKey k vt k' = case vt of
+    Key x v   -> if k == x then Key k' v else putKey k v k'
+    Apply g v -> putKey k g k' <*> putKey k v k'
+    x         -> setter (putKey k) x k'
 
 {-|
 Insert the provided data in the sub-value matching the key.
@@ -956,7 +1003,8 @@ minLength :: Monad m => Int -> RAnalysis T.Text m T.Text
 minLength min =
     ( check
           (\x -> return (T.length x >= min))
-          ("The minimal length is " <> T.pack (show min) <> ".")
+          (\y -> "For " <> (y ^. key) <> " the minimal length is "
+                 <> T.pack (show min) <> ".")
     , const "function minLength();"
     )
 
@@ -1052,9 +1100,36 @@ mySetUrl = myUrl & value .~ "http"
 
 mySetPage :: Valet T.Text Maybe Page
 mySetPage = myPage
-    & at "url"    ?~ "http"
-    & at "page"   ?~ "home"
+    & at "url" ?~ "http"
     & at "visits" ?~ "10"
+    & at "page" ?~ "home"
 
 test = (myPage & at "url" ?~ "H!") ^. to (lookup "url") . _Just . report
 test' = someValet (myPage & at "url" ?~ "H!") ^. at "url" . _Just . report
+
+---------------
+-- TESTS
+--------------
+
+data Person = Person
+    { _firstName :: T.Text
+    }
+
+firstName :: Valet T.Text Maybe T.Text
+firstName = varchar "firstName" 256
+
+person :: Valet T.Text Maybe Person
+person = Person <$> firstName
+
+-- TODO: move the tests to a test suite.
+
+{-|
+Test that a sub-valet is rendered the same way regardless if the key of the
+parent valet is set or not.
+-}
+renderSubValetKeySet :: Bool
+renderSubValetKeySet =
+       (someValet person' ^. at "firstName" . _Just . render)
+    == (someValet person ^. at "firstName" . _Just . render)
+    where
+        person' = person & key .~ "HomePage"
