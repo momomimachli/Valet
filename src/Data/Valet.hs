@@ -215,7 +215,7 @@ data Valet r m a where
     Key :: T.Text -> Valet r m a -> Valet r m a
 
     -- | Add a renderer to a valet.
-    Render :: Rendered r m a -> Valet r m a -> Valet r m a
+    Render :: Rendered r m -> Valet r m a -> Valet r m a
 
     -- | Convert a renderer to a value.
     Read :: (r -> a) -> Valet r m a -> Valet r m a
@@ -344,12 +344,13 @@ instance Coerce (SomeValet r m) (SomeValet r m) where
     coerce = id
 
 {-|
-Type synonym for a function turning a 'Valet' to a rendered value @r@.
+Type synonym for a function turning a value agnostic valet ('SomeValet')
+to a rendered value @r@.
 
 Having such type allow to the rendered value to access all the 'Valet's
 parameters.
 -}
-type Rendered r m a = Valet r m a -> r
+type Rendered r m  = SomeValet r m -> r
 
 {-|
 * Conceptual meaning
@@ -385,7 +386,7 @@ get reported if any.
 
 -- TODO: update doc.
 -}
-type Analysis r m a = KleisliMonoid m a (Maybe (Rendered r m a))
+type Analysis r m a = KleisliMonoid m a (Maybe (Rendered r m))
 
 newtype KleisliMonoid m a b = KleisliMonoid {runKleisliMonoid :: a -> m b}
 
@@ -484,7 +485,7 @@ someValet = Data.Valet.coerce
 {-|
 Create an analysis from the provided function.
 -}
-analysis :: (a -> m (Maybe (Rendered r m a))) -> Analysis r m a
+analysis :: (a -> m (Maybe (Rendered r m))) -> Analysis r m a
 analysis = KleisliMonoid
 
 {-|
@@ -506,7 +507,7 @@ value we can write:
 
 TODO: check the validity of the example.
 -}
-check :: Monad m => (a -> m Bool) -> Rendered r m a -> Analysis r m a
+check :: Monad m => (a -> m Bool) -> Rendered r m -> Analysis r m a
 check g e = analysis $ \x -> do
     check <- g x
     if check then return Nothing else return $ Just e
@@ -615,7 +616,7 @@ setReader v g          = setter setReader v g
 {-|
 Set the renderer of a value.
 -}
-setRenderer :: Valet r m a -> (Valet r m a -> r) -> Valet r m a
+setRenderer :: Valet r m a -> (SomeValet r m -> r) -> Valet r m a
 setRenderer (Value x) g    = Render g (Value x)
 setRenderer (Render _ v) g = Render g v
 setRenderer (Apply h v) g  = Render g (Apply h v)
@@ -662,7 +663,7 @@ getReader (Apply g v) = let x = getValue g (getValue v) in (\_ -> x)
 getReader v           = getReader $ getter v
 
 -- | Return the renderer of the 'Valet'.
-getRenderer :: Monoid r => Valet r m a -> Valet r m a -> r
+getRenderer :: Monoid r => Valet r m a -> SomeValet r m -> r
 getRenderer (Render r _) = r
 getRenderer (Apply _ _)  = mempty
 getRenderer (Value _)    = mempty
@@ -678,7 +679,7 @@ eval = to $ \x -> case x of
     v@(Key k _) -> do
                        val <- runModif (v ^. modifier) $ v ^. value
                        report <- runKleisliMonoid (v ^. analyser) $ val
-                       return $ result val (report <*> pure v)
+                       return $ result val (report <*> pure (someValet v))
     Apply g v   -> do
                        r1 <- g ^. eval
                        r2 <- v ^. eval
@@ -752,8 +753,8 @@ Render a value and its sub-values.
 render :: (Coerce b (SomeValet r m), Monoid r) => Getter b r
 render = to $ \sv -> case Data.Valet.coerce sv of
     SomeValet (Value _)    -> mempty
-    SomeValet v@(Key x v') -> (v' ^. renderer) v
-    SomeValet (Render g v) -> g v
+    SomeValet v@(Key x v') -> (v' ^. renderer) (someValet v)
+    SomeValet (Render g v) -> g (someValet v)
     SomeValet (Apply g v)  -> g ^. render <> v ^. render
     v                      -> (view render) $ sGetter v
 
@@ -865,11 +866,11 @@ data Renderer = Renderer
     }
 @
 -}
-renderer :: Monoid r => Lens' (Valet r m a) (Valet r m a -> r)
+renderer :: Monoid r => Lens' (Valet r m a) (SomeValet r m -> r)
 renderer = lens getRenderer setRenderer
 
-type RAnalysis r m a = (Analysis r m a, Valet r m a -> r)
-type RModif r m a = (Modif m a, Valet r m a -> r)
+type RAnalysis r m a = (Analysis r m a, SomeValet r m -> r)
+type RModif r m a = (Modif m a, SomeValet r m -> r)
 
 {-|
 Lens combining in a tuple an analysis and a rendering (expected to be the
@@ -906,7 +907,6 @@ keyi ::
     => T.Text                     -- ^ Key of the key.
     -> Lens' (Valet r m a) T.Text
 keyi k = lens (\x -> x ^. to (lookup k) . _Just . to getKey) (putKey k)
-
 
 ----------------------------------------
 -- Indexed Setters
@@ -992,6 +992,20 @@ putValet key sv val = case sv' of
         sv' = case sv of
             SomeValet (Key x v) -> SomeValet v
             v                   -> v
+{-|
+Replace the current renderer of a sub-valet matching the provided key
+by a new one.
+-}
+putRenderer ::
+       T.Text       -- ^ Key.
+    -> Valet r m a
+    -> Rendered r m -- ^ Renderer.
+    -> Valet r m a
+putRenderer k vt r = case vt of
+    Key x v    -> if k == x then Key k (putRenderer k v r) else Key x v
+    Render g v -> Render r v
+    Apply g v  -> putRenderer k g r <*> putRenderer k v r
+    x          -> setter (putRenderer k) x r
 
 ----------------
 --- EXAMPLES ---
@@ -1003,7 +1017,7 @@ minLength :: Monad m => Int -> RAnalysis T.Text m T.Text
 minLength min =
     ( check
           (\x -> return (T.length x >= min))
-          (\y -> "For " <> (y ^. key) <> " the minimal length is "
+          (\y -> "For " <> (y ^. to getKey) <> " the minimal length is "
                  <> T.pack (show min) <> ".")
     , const "function minLength();"
     )
@@ -1043,15 +1057,15 @@ int name =
 
 -- Renderers.
 
-renderInt :: Monad m => Valet T.Text m Int -> T.Text
+renderInt :: Monad m => SomeValet T.Text m -> T.Text
 renderInt f =
        "<input name=\"" <> getKey f <> "\" "
-    <> "type=\"text\" value=\"" <> T.pack (show $ getValue f) <> "\"/>"
+    <> "type=\"text\" value=\"" <> {-T.pack (getValue f) <>-} "\"/>"
 
-renderVarchar :: Monad m => Int -> Valet T.Text m T.Text -> T.Text
+renderVarchar :: Monad m => Int -> SomeValet T.Text m -> T.Text
 renderVarchar l f =
        "<input name=\"" <> getKey f <> "\" "
-    <> "type=\"text\" value=\"" <> T.pack (show $ getValue f) <> "\" "
+    <> "type=\"text\" value=\"" <> {-T.pack (show $ getValue f) <>-} "\" "
     <> "length=\"" <> T.pack (show l) <> "\""
     <> "/>"
 
@@ -1077,7 +1091,7 @@ myUrl :: Valet T.Text Maybe T.Text
 myUrl =
     varchar "url" 256
       & rModifier <>~ ( modif (return . T.toUpper)
-                      , \x -> "<script>toUpper(\"" <> x ^. key <> "\");</script>"
+                      , \x -> "<script>toUpper(\"" <> x ^. to getKey <> "\");</script>"
                       )
       & rAnalyser <>~ minLength 4
 
@@ -1090,7 +1104,7 @@ myVisits :: Valet T.Text Maybe Int
 myVisits = int "visits"
 
 myPage :: Valet T.Text Maybe Page
-myPage = Page <$> myUrl <*> myName <*> myVisits
+myPage = (Page <$> myUrl <*> myName <*> myVisits) -- & key .~ "t"
 
 mySetName :: Valet T.Text Maybe T.Text
 mySetName = myName & value .~ "home"
