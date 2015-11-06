@@ -753,8 +753,8 @@ Render a value and its sub-values.
 render :: (Coerce b (SomeValet r m), Monoid r) => Getter b r
 render = to $ \sv -> case Data.Valet.coerce sv of
     SomeValet (Value _)    -> mempty
-    SomeValet v@(Key x v') -> (v' ^. renderer) (someValet v)
-    SomeValet (Render g v) -> g (someValet v)
+    SomeValet v@(Key x v') -> v' ^. render
+    SomeValet (Render g v) -> g (someValet v) <> v ^. render
     SomeValet (Apply g v)  -> g ^. render <> v ^. render
     v                      -> (view render) $ sGetter v
 
@@ -1002,10 +1002,15 @@ putRenderer ::
     -> Rendered r m -- ^ Renderer.
     -> Valet r m a
 putRenderer k vt r = case vt of
-    Key x v    -> if k == x then Key k (putRenderer k v r) else Key x v
-    Render g v -> Render r v
+    Key x v    -> if k == x
+                  then Key k (putRenderer' k v r)
+                  else Key k (putRenderer k v r)
     Apply g v  -> putRenderer k g r <*> putRenderer k v r
     x          -> setter (putRenderer k) x r
+    where
+        putRenderer' k vt r = case vt of
+            Render g v -> Render r v
+            x          -> setter (putRenderer' k) x r
 
 ----------------
 --- EXAMPLES ---
@@ -1104,7 +1109,7 @@ myVisits :: Valet T.Text Maybe Int
 myVisits = int "visits"
 
 myPage :: Valet T.Text Maybe Page
-myPage = (Page <$> myUrl <*> myName <*> myVisits) -- & key .~ "t"
+myPage = (Page <$> myUrl <*> myName <*> myVisits) & key .~ "t"
 
 mySetName :: Valet T.Text Maybe T.Text
 mySetName = myName & value .~ "home"
