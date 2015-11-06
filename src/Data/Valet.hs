@@ -131,6 +131,7 @@ module Data.Valet
       --   'Control.Lens' library and the various tutorials which have been
       --   written about this library.
     , value
+    , showValueFunc
     , key
     , analyser
     , rAnalyser
@@ -147,6 +148,7 @@ module Data.Valet
       -- | Getters can be used as lenses but only to retrieve value, not
       --   to modify or set them.
     , eval
+    , showValue
     , render
     , lookup
     , renderSubValets
@@ -211,6 +213,9 @@ data Valet r m a where
     -- | Create a valet by setting its value.
     Value :: a -> Valet r m a
 
+    -- | Display a value as 'Text'.
+    ShowValue :: (a -> T.Text) -> Valet r m a -> Valet r m a
+
     -- | Set a key to a valet.
     Key :: T.Text -> Valet r m a -> Valet r m a
 
@@ -234,7 +239,8 @@ data Valet r m a where
 
 -- | Show instance for debugging purposes.
 instance Show (Valet r m a) where
-    show (Value x)     = "Value x:"
+    show (Value x)     = "Value: x"
+    show (ShowValue _ v) = "Show value: " ++ show v
     show (Read _ f)    = "Read g: " ++ show f
     show (Key x f)     = "Key " ++ show x ++ ": " ++ show f
     show (Render _ f)  = "Render r: " ++ show f
@@ -533,13 +539,14 @@ setter ::
     -> Valet r m a
     -> c
     -> Valet r m a
-setter _ (Value x) _     = Value x
-setter h (Key k v) x     = Key k (h v x)
-setter h (Read g v) x    = Read g (h v x)
-setter h (Render g v) x  = Render g (h v x)
-setter h (Modify g v) x  = Modify g (h v x)
-setter h (Analyse g v) x = Analyse g (h v x)
-setter _ (Apply g v) _   = Apply g v
+setter _ (Value x) _       = Value x
+setter h (ShowValue g v) x = ShowValue g (h v x)
+setter h (Key k v) x       = Key k (h v x)
+setter h (Read g v) x      = Read g (h v x)
+setter h (Render g v) x    = Render g (h v x)
+setter h (Modify g v) x    = Modify g (h v x)
+setter h (Analyse g v) x   = Analyse g (h v x)
+setter _ (Apply g v) _     = Apply g v
 
 {-|
 Set the value of the provided 'Valet'.
@@ -551,6 +558,14 @@ By doing so, the unmodified valet will be returned.
 setValue :: Valet r m a -> a -> Valet r m a
 setValue (Value _) x = Value x
 setValue v x         = setter setValue v x
+
+{-|
+Set a function which converts the value of the 'Valet' to 'Text'.
+-}
+setShowValue :: Valet r m a -> (a -> T.Text) -> Valet r m a
+setShowValue (Value x) g       = ShowValue g (Value x)
+setShowValue (ShowValue _ v) g = ShowValue g v
+setShowValue v x               = setter setShowValue v x
 
 {-|
 Set the key of a the provided 'Valet'.
@@ -628,13 +643,14 @@ setRenderer v g            = setter setRenderer v g
 
 -- | Generic getter for 'Valet'.
 getter :: Valet r m a -> Valet r m a
-getter (Key _ v)     = v
-getter (Read _ v)    = v
-getter (Render _ v)  = v
-getter (Modify _ v)  = v
-getter (Analyse _ v) = v
-getter (Apply g v)   = g <*> v
-getter (Value x)     = Value x
+getter (ShowValue _ v) = v
+getter (Key _ v)       = v
+getter (Read _ v)      = v
+getter (Render _ v)    = v
+getter (Modify _ v)    = v
+getter (Analyse _ v)   = v
+getter (Apply g v)     = g <*> v
+getter (Value x)       = Value x
 
 -- | Return the value of a 'Valet'.
 getValue :: Valet r m a -> a
@@ -642,17 +658,28 @@ getValue (Value x)    = x
 getValue (Apply g v)  = getValue g (getValue v)
 getValue v            = getValue $ getter v
 
+{-|
+Retrieve the value converting the value of a 'Valet' to 'Text'.
+
+If this function does not exist, return one which will always
+return an empty 'Text' ("").
+-}
+getShowValue :: Valet r m a -> a -> T.Text
+getShowValue (Value _)       = (\_ -> mempty)
+getShowValue (Apply _ _)     = (\_ -> mempty)
+getShowValue (ShowValue g _) = g
+
 -- | Return the analyser of a 'Valet'.
 getAnalyser :: (Monoid r, Monad m) => Valet r m a -> Analysis r m a
 getAnalyser (Value _)     = mempty
-getAnalyser (Apply g v)   = mempty
+getAnalyser (Apply _ _)   = mempty
 getAnalyser (Analyse g _) = g
 getAnalyser v             = getAnalyser $ getter v
 
 -- | Return the modifier of a 'Valet'.
 getModifier :: Monad m => Valet r m a -> Modif m a
 getModifier (Value _)    = mempty
-getModifier (Apply g v)  = mempty
+getModifier (Apply _ _)  = mempty
 getModifier (Modify g _) = g
 getModifier v            = getModifier $ getter v
 
@@ -688,13 +715,33 @@ eval = to $ \x -> case x of
 
 -- | Generic getter for a value agnostic valet.
 sGetter :: SomeValet r m -> SomeValet r m
-sGetter (SomeValet (Key _ v))     = SomeValet v
-sGetter (SomeValet (Read _ v))    = SomeValet v
-sGetter (SomeValet (Render _ v))  = SomeValet v
-sGetter (SomeValet (Modify _ v))  = SomeValet v
-sGetter (SomeValet (Analyse _ v)) = SomeValet v
-sGetter (SomeValet (Apply g v))   = SomeValet $ g <*> v
-sGetter (SomeValet (Value x))     = SomeValet $ Value x
+sGetter (SomeValet (ShowValue _ v)) = SomeValet v
+sGetter (SomeValet (Key _ v))       = SomeValet v
+sGetter (SomeValet (Read _ v))      = SomeValet v
+sGetter (SomeValet (Render _ v))    = SomeValet v
+sGetter (SomeValet (Modify _ v))    = SomeValet v
+sGetter (SomeValet (Analyse _ v))   = SomeValet v
+sGetter (SomeValet (Apply g v))     = SomeValet $ g <*> v
+sGetter (SomeValet (Value x))       = SomeValet $ Value x
+
+{-|
+Display a value contained in a 'Valet' or value agnostic valet ('SomeValet')
+as 'Text'.
+
+If no function to render to render the 'Valet' (which can be set using
+the 'showValueFunc' lens) then an empty 'Text' is returned ("").
+-}
+showValue :: Coerce b (SomeValet r m) => Getter b T.Text
+showValue = to $ \sv -> case Data.Valet.coerce sv of
+    SomeValet (Value _)       -> ""
+    SomeValet (ShowValue g v) -> g $ v ^. value
+    SomeValet (Apply g v)     -> let t1 = g ^. showValue
+                                     t2 = v ^. showValue
+                                 in
+                                 if t1 /= ""
+                                 then t1 <> ", " <> t2
+                                 else t2
+    v                         -> sGetter v ^. showValue
 
 {-|
 Get the key of a 'Valet'.
@@ -821,6 +868,16 @@ value :: Lens' (Valet r m a) a
 value = lens getValue setValue
 
 {-|
+Function which convert the value of a 'Valet' to 'Text'.
+
+It is usefull to have such function when you wish to display the value
+of the 'Valet' in the renderer function (as the renderer takes as
+parameter a value agnostic valet ('SomeValet') rather than a 'Valet').
+-}
+showValueFunc :: Lens' (Valet r m a) (a -> T.Text)
+showValueFunc = lens getShowValue setShowValue
+
+{-|
 Key of a valet.
 
 This key should be unique as it can be used for interacting with the sub-valets
@@ -922,6 +979,7 @@ putKey ::
     -> T.Text -- ^ New key.
     -> Valet r m a
 putKey k vt k' = case vt of
+    -- TODO: else clause is probably incorrect.
     Key x v   -> if k == x then Key k' v else putKey k v k'
     Apply g v -> putKey k g k' <*> putKey k v k'
     x         -> setter (putKey k) x k'
@@ -955,6 +1013,8 @@ putValueReader key reader form val = case form of
     Read g v -> Read g $ putValueReader key (Just g) v val
     Key x v  -> if key == x
                 then Key x $ putValueReader key reader v val
+
+                -- TODO: probably incorrect!
                 else Key x v
     Apply g v ->     putValueReader key Nothing g val
                  <*> putValueReader key Nothing v val
@@ -975,6 +1035,8 @@ putValet ::
     -> SomeValet r m
 putValet key sv val = case sv' of
     SomeValet (Value x)     -> SomeValet (Value x)
+
+    -- TODO: there is probably a bug in this condition.
     SomeValet (Key x v)     -> if key == x
                                then keyValet x val'
                                else SomeValet (Key x v)
@@ -1049,16 +1111,18 @@ varchar ::
     -> Valet T.Text m T.Text
 varchar name l =
     pure mempty
-        & key      .~ name
-        & reader   .~ id
-        & renderer .~ renderVarchar l
+        & key           .~ name
+        & showValueFunc .~ T.pack . show
+        & reader        .~ id
+        & renderer      .~ renderVarchar l
 
 int :: Monad m => T.Text -> Valet T.Text m Int
 int name =
     valet 0
-        & key      .~ name
-        & reader   .~ (read . T.unpack)
-        & renderer .~ renderInt
+        & key           .~ name
+        & showValueFunc .~ T.pack . show
+        & reader        .~ (read . T.unpack)
+        & renderer      .~ renderInt
 
 -- Renderers.
 
@@ -1070,9 +1134,11 @@ renderInt f =
 renderVarchar :: Monad m => Int -> SomeValet T.Text m -> T.Text
 renderVarchar l f =
        "<input name=\"" <> getKey f <> "\" "
-    <> "type=\"text\" value=\"" <> {-T.pack (show $ getValue f) <>-} "\" "
+    <> "type=\"text\" value=\"" <> {-extractVal f <>-} "\" "
     <> "length=\"" <> T.pack (show l) <> "\""
     <> "/>"
+    --where
+      --  extractVal (SomeValet v) = T.pack $ show $ getValue v
 
 -- Example.
 
@@ -1109,7 +1175,7 @@ myVisits :: Valet T.Text Maybe Int
 myVisits = int "visits"
 
 myPage :: Valet T.Text Maybe Page
-myPage = (Page <$> myUrl <*> myName <*> myVisits) & key .~ "t"
+myPage = (Page <$> myUrl <*> myName <*> myVisits) -- & key .~ "t"
 
 mySetName :: Valet T.Text Maybe T.Text
 mySetName = myName & value .~ "home"
