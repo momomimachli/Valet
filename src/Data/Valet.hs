@@ -1112,9 +1112,9 @@ varchar ::
 varchar name l =
     pure mempty
         & key           .~ name
-        & showValueFunc .~ T.pack . show
         & reader        .~ id
         & renderer      .~ renderVarchar l
+        & showValueFunc .~ T.pack . show
 
 int :: Monad m => T.Text -> Valet T.Text m Int
 int name =
@@ -1129,16 +1129,14 @@ int name =
 renderInt :: Monad m => SomeValet T.Text m -> T.Text
 renderInt f =
        "<input name=\"" <> getKey f <> "\" "
-    <> "type=\"text\" value=\"" <> {-T.pack (getValue f) <>-} "\"/>"
+    <> "type=\"text\" value=\"" <> f ^. showValue <> "\"/>"
 
 renderVarchar :: Monad m => Int -> SomeValet T.Text m -> T.Text
 renderVarchar l f =
        "<input name=\"" <> getKey f <> "\" "
-    <> "type=\"text\" value=\"" <> {-extractVal f <>-} "\" "
+    <> "type=\"text\" value=\"" <> f ^. showValue <> "\" "
     <> "length=\"" <> T.pack (show l) <> "\""
     <> "/>"
-    --where
-      --  extractVal (SomeValet v) = T.pack $ show $ getValue v
 
 -- Example.
 
@@ -1147,6 +1145,13 @@ data Page = Page
     , pageName :: T.Text
     , visits :: Int
     } deriving (Show)
+
+myTest :: Valet T.Text Maybe T.Text
+myTest = varchar "url" 256
+      & rModifier <>~ ( modif (return . T.toUpper)
+                      , \x -> "<script>toUpper(\"" <> x ^. to getKey <> "\");</script>"
+                      )
+      & rAnalyser <>~ minLength 4
 
 {-|
 Example of a custom rendering.
