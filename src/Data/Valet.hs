@@ -978,8 +978,7 @@ putKey ::
     -> T.Text -- ^ New key.
     -> Valet r m a
 putKey k vt k' = case vt of
-    -- TODO: else clause is probably incorrect.
-    Key x v   -> if k == x then Key k' v else putKey k v k'
+    Key x v   -> if k == x then Key k' v else Key x (putKey k v k')
     Apply g v -> putKey k g k' <*> putKey k v k'
     x         -> setter (putKey k) x k'
 
@@ -1179,7 +1178,7 @@ myVisits :: Valet T.Text Maybe Int
 myVisits = int "visits"
 
 myPage :: Valet T.Text Maybe Page
-myPage = (Page <$> myUrl <*> myName <*> myVisits) -- & key .~ "t"
+myPage = (Page <$> myUrl <*> myName <*> myVisits) & key .~ "t"
 
 mySetName :: Valet T.Text Maybe T.Text
 mySetName = myName & value .~ "home"
