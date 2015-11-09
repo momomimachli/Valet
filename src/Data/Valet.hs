@@ -210,32 +210,32 @@ If your valet contains a 'String' then its type would be:
 -}
 data Valet r m a where
 
-    -- | Create a valet by setting its value.
-    Value :: a -> Valet r m a
-
-    -- | Display a value as 'Text'.
-    ShowValue :: (a -> T.Text) -> Valet r m a -> Valet r m a
-
     -- | Set a key to a valet.
     Key :: T.Text -> Valet r m a -> Valet r m a
 
     -- | Add a renderer to a valet.
     Render :: Rendered r m -> Valet r m a -> Valet r m a
 
-    -- | Convert a renderer to a value.
-    Read :: (r -> a) -> Valet r m a -> Valet r m a
+    -- | Add a analyser to a valet.
+    Analyse ::  Analysis r m a -> Valet r m a -> Valet r m a
 
     -- | Add a modifier to a valet.
     Modify :: Modif m a -> Valet r m a -> Valet r m a
 
-    -- | Add a analyser to a valet.
-    Analyse ::  Analysis r m a -> Valet r m a -> Valet r m a
+    -- | Convert a renderer to a value.
+    Read :: (r -> a) -> Valet r m a -> Valet r m a
+
+    -- | Display a value as 'Text'.
+    ShowValue :: (a -> T.Text) -> Valet r m a -> Valet r m a
 
     -- | Applicative transformation. This allows to combine valets in a given
     --   data-type in an applicative style.
     --   For example 'name' and 'age' being valets:
     --   > Person <$> name <*> age
     Apply :: Monoid r => Valet r m (c -> a) -> Valet r m c -> Valet r m a
+
+    -- | Create a valet by setting its value.
+    Value :: a -> Valet r m a
 
 -- | Show instance for debugging purposes.
 instance Show (Valet r m a) where
@@ -799,11 +799,16 @@ Render a value and its sub-values.
 -}
 render :: (Coerce b (SomeValet r m), Monoid r) => Getter b r
 render = to $ \sv -> case Data.Valet.coerce sv of
-    SomeValet (Value _)    -> mempty
-    SomeValet v@(Key x v') -> v' ^. render
-    SomeValet (Render g v) -> g (someValet v) <> v ^. render
-    SomeValet (Apply g v)  -> g ^. render <> v ^. render
-    v                      -> (view render) $ sGetter v
+    v@(SomeValet (Key x v')) -> (v' ^. renderer $ v) <> render' (someValet v')
+    SomeValet (Render g v)   -> g (someValet v) <> v ^. render
+    SomeValet (Apply g v)    -> g ^. render <> v ^. render
+    SomeValet (Value _)      -> mempty
+    v                        -> (view render) $ sGetter v
+    where
+        render' :: Monoid r => SomeValet r m -> r
+        render' (SomeValet (Apply g v)) = g ^. render <> v ^. render
+        render' (SomeValet (Value _))   = mempty
+        render' v                       = render' $ sGetter v
 
 {-|
 Render the sub-valets of a 'Valet' but not the 'Valet' itself.
@@ -1112,9 +1117,9 @@ varchar ::
 varchar name l =
     pure mempty
         & key           .~ name
+        & showValueFunc .~ T.pack . show
         & reader        .~ id
         & renderer      .~ renderVarchar l
-        & showValueFunc .~ T.pack . show
 
 int :: Monad m => T.Text -> Valet T.Text m Int
 int name =
