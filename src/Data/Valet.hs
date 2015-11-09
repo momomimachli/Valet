@@ -1011,12 +1011,19 @@ putValueReader key reader form val = case form of
     Read g v -> Read g $ putValueReader key (Just g) v val
     Key x v  -> if key == x
                 then Key x $ putValueReader key reader v val
-
-                -- TODO: probably incorrect!
-                else Key x v
+                else Key x (putValueReader' reader v val)
     Apply g v ->     putValueReader key Nothing g val
                  <*> putValueReader key Nothing v val
     x         -> setter (putValueReader key reader) x val
+    where
+        putValueReader' :: Monad m => Maybe (r -> a) -> Valet r m a -> r -> Valet r m a
+        putValueReader' reader vt val = case vt of
+            Value x -> case reader of
+                           Just g -> Value $ g val
+                           Nothing -> Value x
+            Apply g v ->     putValueReader key Nothing g val
+                         <*> putValueReader key Nothing v val
+            x -> setter (putValueReader' reader) x val
 
 {-|
 Replace the current 'Valet' by a value agnostic one ('SomeValet')
