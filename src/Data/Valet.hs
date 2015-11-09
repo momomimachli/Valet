@@ -799,16 +799,10 @@ Render a value and its sub-values.
 -}
 render :: (Coerce b (SomeValet r m), Monoid r) => Getter b r
 render = to $ \sv -> case Data.Valet.coerce sv of
-    v@(SomeValet (Key x v')) -> (v' ^. renderer $ v) <> render' (someValet v')
-    SomeValet (Render g v)   -> g (someValet v) <> v ^. render
+    v@(SomeValet (Key x v')) -> (v' ^. renderer $ v) <> (someValet v') ^. render
     SomeValet (Apply g v)    -> g ^. render <> v ^. render
     SomeValet (Value _)      -> mempty
     v                        -> (view render) $ sGetter v
-    where
-        render' :: Monoid r => SomeValet r m -> r
-        render' (SomeValet (Apply g v)) = g ^. render <> v ^. render
-        render' (SomeValet (Value _))   = mempty
-        render' v                       = render' $ sGetter v
 
 {-|
 Render the sub-valets of a 'Valet' but not the 'Valet' itself.
