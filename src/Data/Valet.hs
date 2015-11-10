@@ -126,10 +126,12 @@ module Data.Valet
 
       -- * Lenses
 
-      -- | Lenses are the mean to access, set or modify the different components
-      --   of a valet. To know more about lenses, please refer to the
-      --   'Control.Lens' library and the various tutorials which have been
-      --   written about this library.
+      {-|
+      Lenses are the mean to access, set or modify the different components
+      of a valet. To know more about lenses, please refer to the
+      'Control.Lens' library and the various tutorials which have been
+      written about this library.
+      -}
     , value
     , showValueFunc
     , key
@@ -145,13 +147,21 @@ module Data.Valet
 
       -- * Getters
 
-      -- | Getters can be used as lenses but only to retrieve value, not
-      --   to modify or set them.
+      {-|
+      Getters can be used as lenses but only to retrieve value, not
+      to modify or set them.
+      -}
     , eval
     , showValue
     , render
-    , lookup
     , renderSubValets
+
+      -- ** Indexed getters
+
+      {-|
+      The key of the 'Valet' must be provided to these getters.
+      -}
+    , lookup
     ) where
 
 import Control.Applicative ((<|>))
