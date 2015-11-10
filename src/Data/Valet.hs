@@ -309,24 +309,6 @@ return all the error messages or 'Nothing' if there are not any.
 data SomeValet r m where
     SomeValet :: (Monoid r, Monad m) => Valet r m a -> SomeValet r m
 
-type instance Index (SomeValet r m) = T.Text
-type instance IxValue (SomeValet r m) = SomeValet r m
-
-instance (Monad m, Monoid r) => Ixed (SomeValet r m) where
-    ix k f sv = case lookup k sv of
-        Just v  -> f v <&> \v' -> putValet k sv v'
-        Nothing -> pure sv
-
-{-|
-Allows to use the 'at' lens to set or view value agnostics valets using
-their key.
--}
-instance (Monad m, Monoid r) => At (SomeValet r m) where
-    at k f v = f vr <&> \r -> case r of
-        Nothing -> v
-        Just r' -> putValet k v r'
-        where vr = lookup k v
-
 {-|
 Coerce a value of a given type to a value of another type.
 
@@ -1027,40 +1009,6 @@ putValueReader key reader form val = case form of
             x -> setter (valueReader reader) x val
 
 {-|
-Replace the current 'Valet' by a value agnostic one ('SomeValet')
-at the place matching the provided key.
-
-To note that a 'Valet' can also be put instead of a 'SomeValet' since
-it will be then coerced to 'SomeValet'.
--}
-putValet ::
-       Coerce b (SomeValet r m)
-    => T.Text         -- ^ Key.
-    -> SomeValet r m  -- ^ Initial 'SomeValet'.
-    -> b              -- ^ Sub-some-valet to be inserted.
-    -> SomeValet r m
-putValet key sv val = case sv' of
-    SomeValet (Value x)     -> SomeValet (Value x)
-
-    -- TODO: there is probably a bug in this condition.
-    SomeValet (Key x v)     -> if key == x
-                               then keyValet x val'
-                               else SomeValet (Key x v)
-    SomeValet (Read g v)    -> SomeValet (Read g v)
-    SomeValet (Render g v)  -> SomeValet (Render g v)
-    SomeValet (Modify g v)  -> SomeValet (Modify g v)
-    SomeValet (Analyse g v) -> SomeValet (Analyse g v)
-    SomeValet (Apply g v)   -> putValet key (SomeValet $ g <*> v) val'
-    where
-        val' = Data.Valet.coerce val
-        keyValet k (SomeValet v) = SomeValet (Key k v)
-        -- Remove the existing key if defined to avoid setting it twice.
-        -- Since the key is set at the top, we just need to perform a single
-        -- pattern match.
-        sv' = case sv of
-            SomeValet (Key x v) -> SomeValet v
-            v                   -> v
-{-|
 Replace the current renderer of a sub-valet matching the provided key
 by a new one.
 -}
@@ -1201,7 +1149,6 @@ mySetPage = myPage
     & at "page" ?~ "home"
 
 test = (myPage & at "url" ?~ "H!") ^. to (lookup "url") . _Just . report
-test' = someValet (myPage & at "url" ?~ "H!") ^. at "url" . _Just . report
 
 ---------------
 -- TESTS
@@ -1225,7 +1172,7 @@ parent valet is set or not.
 -}
 renderSubValetKeySet :: Bool
 renderSubValetKeySet =
-       (someValet person' ^. at "firstName" . _Just . render)
-    == (someValet person ^. at "firstName" . _Just . render)
+       person' ^. to (lookup "firstName") . _Just . render
+    == person ^. to (lookup "firstName") . _Just . render
     where
         person' = person & key .~ "HomePage"
