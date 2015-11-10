@@ -259,7 +259,7 @@ type instance Index (Valet r m a) = T.Text
 type instance IxValue (Valet r m a) = r
 
 instance (Monad m, Monoid r) => Ixed (Valet r m a) where
-    ix k f sv = case lookup k sv of
+    ix k f sv = case sv ^. lookup k of
         Just v  -> f (v ^. render) <&> \v' -> putValue k sv v'
         Nothing -> pure sv
 
@@ -270,7 +270,7 @@ instance (Monad m, Monoid r) => At (Valet r m a) where
     at k f v = f vr <&> \r -> case r of
         Nothing -> v
         Just r' -> putValue k v r'
-        where vr = fmap (view render) $ v ^. to (lookup k)
+        where vr = fmap (view render) $ v ^. lookup k
 
 {-|
 Value agnostic valet.
@@ -796,16 +796,16 @@ renderSubValets = to $ \sv -> case Data.Valet.coerce sv of
     v                     -> (view renderSubValets) $ sGetter v
 
 -- | Lookup for a valet returning a value agnostic valet.
-lookup :: Coerce b (SomeValet r m) => T.Text -> b -> Maybe (SomeValet r m)
-lookup k s = case Data.Valet.coerce s of
+lookup :: Coerce b (SomeValet r m) => T.Text -> Getter b (Maybe (SomeValet r m))
+lookup k = to $ \s -> case Data.Valet.coerce s of
     SomeValet (Value _)      -> Nothing
-    v@(SomeValet (Key x v')) -> if k == x then Just v else lookup k v'
-    SomeValet (Read _ v)     -> lookup k (SomeValet v)
-    SomeValet (Render _ v)   -> lookup k (SomeValet v)
-    SomeValet (Modify _ v)   -> lookup k (SomeValet v)
-    SomeValet (Analyse _ v)  -> lookup k (SomeValet v)
-    SomeValet (Apply g v)    ->    lookup k (SomeValet g)
-                               <|> lookup k (SomeValet v)
+    v@(SomeValet (Key x v')) -> if k == x then Just v else v' ^. lookup k
+    SomeValet (Read _ v)     -> SomeValet v ^. lookup k
+    SomeValet (Render _ v)   -> SomeValet v ^. lookup k
+    SomeValet (Modify _ v)   -> SomeValet v ^. lookup k
+    SomeValet (Analyse _ v)  -> SomeValet v ^. lookup k
+    SomeValet (Apply g v)    ->    SomeValet g ^. lookup k
+                               <|> SomeValet v ^. lookup k
 
 {-|
 Get all the keys of a 'Valet' and its sub-valets.
@@ -944,7 +944,7 @@ keyi ::
        (Monoid r, Monad m)
     => T.Text                     -- ^ Key of the key.
     -> Lens' (Valet r m a) T.Text
-keyi k = lens (\x -> x ^. to (lookup k) . _Just . to getKey) (putKey k)
+keyi k = lens (\x -> x ^. lookup k . _Just . to getKey) (putKey k)
 
 ----------------------------------------
 -- Indexed Setters
@@ -1148,7 +1148,7 @@ mySetPage = myPage
     & at "visits" ?~ "10"
     & at "page" ?~ "home"
 
-test = (myPage & at "url" ?~ "H!") ^. to (lookup "url") . _Just . report
+test = (myPage & at "url" ?~ "H!") ^. lookup "url" . _Just . report
 
 ---------------
 -- TESTS
@@ -1172,7 +1172,7 @@ parent valet is set or not.
 -}
 renderSubValetKeySet :: Bool
 renderSubValetKeySet =
-       person' ^. to (lookup "firstName") . _Just . render
-    == person ^. to (lookup "firstName") . _Just . render
+       person' ^. lookup "firstName" . _Just . render
+    == person ^. lookup "firstName" . _Just . render
     where
         person' = person & key .~ "HomePage"
