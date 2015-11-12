@@ -155,6 +155,7 @@ module Data.Valet
     , showValue
     , render
     , renderSubValets
+    , keys
 
       -- ** Indexed getters
 
@@ -249,7 +250,7 @@ data Valet r m a where
 
 -- | Show instance for debugging purposes.
 instance Show (Valet r m a) where
-    show (Value x)     = "Value: x"
+    show (Value _)     = "Value: x"
     show (ShowValue _ v) = "Show value: " ++ show v
     show (Read _ f)    = "Read g: " ++ show f
     show (Key x f)     = "Key " ++ show x ++ ": " ++ show f
@@ -507,8 +508,8 @@ TODO: check the validity of the example.
 -}
 check :: Monad m => (a -> m Bool) -> Rendered r m -> Analysis r m a
 check g e = analysis $ \x -> do
-    check <- g x
-    if check then return Nothing else return $ Just e
+    predicate <- g x
+    if predicate then return Nothing else return $ Just e
 
 {-|
 Create a result from a value and a report.
@@ -660,6 +661,7 @@ getShowValue :: Valet r m a -> a -> T.Text
 getShowValue (Value _)       = (\_ -> mempty)
 getShowValue (Apply _ _)     = (\_ -> mempty)
 getShowValue (ShowValue g _) = g
+getShowValue v               = getShowValue $ getter v
 
 -- | Return the analyser of a 'Valet'.
 getAnalyser :: (Monoid r, Monad m) => Valet r m a -> Analysis r m a
@@ -695,10 +697,10 @@ applying on it the modification and analysis which have been previously set.
 eval :: (Monad m, Monoid r) => Getter (Valet r m a) (m (Result r a))
 eval = to $ \x -> case x of
     Value v     -> return $ Success v
-    v@(Key k _) -> do
+    v@(Key _ _) -> do
                        val <- runModif (v ^. modifier) $ v ^. value
-                       report <- runKleisliMonoid (v ^. analyser) $ val
-                       return $ result val (report <*> pure (someValet v))
+                       report' <- runKleisliMonoid (v ^. analyser) $ val
+                       return $ result val (report' <*> pure (someValet v))
     Apply g v   -> do
                        r1 <- g ^. eval
                        r2 <- v ^. eval
@@ -740,7 +742,7 @@ Get the key of a 'Valet'.
 -}
 getKey :: Coerce b (SomeValet r m) => b -> T.Text
 getKey sv = case Data.Valet.coerce sv of
-    SomeValet (Value x)   -> ""
+    SomeValet (Value _)   -> ""
     SomeValet (Key x _)   -> x
     SomeValet (Apply _ _) -> ""
     v                     -> getKey $ sGetter v
@@ -778,9 +780,9 @@ report ::
        (Coerce a (SomeValet r m), Monad m, Monoid r)
     => Getter a (m (Maybe r))
 report =
-    to $ result . Data.Valet.coerce
+    to $ result' . Data.Valet.coerce
     where
-        result (SomeValet v) = do
+        result' (SomeValet v) = do
             r <- v ^. eval
             case r of
                 Success _  -> return Nothing
@@ -791,7 +793,7 @@ Render a value and its sub-values.
 -}
 render :: (Coerce b (SomeValet r m), Monoid r) => Getter b r
 render = to $ \sv -> case Data.Valet.coerce sv of
-    v@(SomeValet (Key x v')) -> (v' ^. renderer $ v) <> (someValet v') ^. render
+    v@(SomeValet (Key _ v')) -> (v' ^. renderer $ v) <> (someValet v') ^. render
     SomeValet (Apply g v)    -> g ^. render <> v ^. render
     SomeValet (Value _)      -> mempty
     v                        -> (view render) $ sGetter v
@@ -808,13 +810,14 @@ renderSubValets = to $ \sv -> case Data.Valet.coerce sv of
 -- | Lookup for a valet returning a value agnostic valet.
 lookup :: Coerce b (SomeValet r m) => T.Text -> Getter b (Maybe (SomeValet r m))
 lookup k = to $ \s -> case Data.Valet.coerce s of
-    SomeValet (Value _)      -> Nothing
-    v@(SomeValet (Key x v')) -> if k == x then Just v else v' ^. lookup k
-    SomeValet (Read _ v)     -> SomeValet v ^. lookup k
-    SomeValet (Render _ v)   -> SomeValet v ^. lookup k
-    SomeValet (Modify _ v)   -> SomeValet v ^. lookup k
-    SomeValet (Analyse _ v)  -> SomeValet v ^. lookup k
-    SomeValet (Apply g v)    ->    SomeValet g ^. lookup k
+    SomeValet (Value _)       -> Nothing
+    v@(SomeValet (Key x v'))  -> if k == x then Just v else v' ^. lookup k
+    SomeValet (ShowValue _ v) -> SomeValet v ^. lookup k
+    SomeValet (Read _ v)      -> SomeValet v ^. lookup k
+    SomeValet (Render _ v)    -> SomeValet v ^. lookup k
+    SomeValet (Modify _ v)    -> SomeValet v ^. lookup k
+    SomeValet (Analyse _ v)   -> SomeValet v ^. lookup k
+    SomeValet (Apply g v)     ->    SomeValet g ^. lookup k
                                <|> SomeValet v ^. lookup k
 
 {-|
@@ -831,7 +834,7 @@ TODO: check the validity of the above example.
 -}
 keys :: Coerce b (SomeValet r m) => Getter b [T.Text]
 keys = to $ \sv -> case Data.Valet.coerce sv of
-    SomeValet (Value x)   -> []
+    SomeValet (Value _)   -> []
     SomeValet (Key x v)   -> [x] <> v ^. keys
     SomeValet (Apply g v) -> g ^. keys <> v ^. keys
     v                     -> (view keys) $ sGetter v
@@ -983,7 +986,7 @@ putValue ::
     -> Valet r m a
     -> r             -- ^ Data.
     -> Valet r m a
-putValue key = putValueReader key Nothing
+putValue key' = putValueReader key' Nothing
 
 {-|
 Insert the provided data in the sub-value matching the key
@@ -996,31 +999,33 @@ putValueReader ::
     -> Valet r m a
     -> r              -- ^ Data.
     -> Valet r m a
-putValueReader key reader form val = case form of
-    Value x  -> case reader of
+putValueReader key' reader' form val = case form of
+    Value x  -> case reader' of
                      Just g  -> Value $ g val
                      Nothing -> Value x
-    Read g v -> Read g $ putValueReader key (Just g) v val
-    Key x v  -> if key == x
-                then Key x $ putValueReader key reader v val
-                else Key x (valueReader reader v val)
-    Apply g v ->     putValueReader key Nothing g val
-                 <*> putValueReader key Nothing v val
-    x         -> setter (putValueReader key reader) x val
+    Read g v -> Read g $ putValueReader key' (Just g) v val
+    Key x v  -> if key' == x
+                then Key x $ putValueReader key' reader' v val
+                else Key x (valueReader reader' v val)
+    Apply g v ->     putValueReader key' Nothing g val
+                 <*> putValueReader key' Nothing v val
+    x         -> setter (putValueReader key' reader') x val
     where
         valueReader ::
             Monad m => Maybe (r -> a) -> Valet r m a -> r -> Valet r m a
-        valueReader reader vt val = case vt of
-            Value x -> case reader of
-                           Just g -> Value $ g val
+        valueReader reader'' vt newValet = case vt of
+            Value x -> case reader'' of
+                           Just g -> Value $ g newValet
                            Nothing -> Value x
-            Apply g v ->     putValueReader key Nothing g val
-                         <*> putValueReader key Nothing v val
-            x -> setter (valueReader reader) x val
+            Apply g v ->     putValueReader key' Nothing g newValet
+                         <*> putValueReader key' Nothing v newValet
+            x -> setter (valueReader reader'') x newValet
 
 {-|
 Replace the current renderer of a sub-valet matching the provided key
 by a new one.
+
+-- TODO: implement as a lens.
 -}
 putRenderer ::
        T.Text       -- ^ Key.
@@ -1034,9 +1039,9 @@ putRenderer k vt r = case vt of
     Apply g v  -> putRenderer k g r <*> putRenderer k v r
     x          -> setter (putRenderer k) x r
     where
-        putRenderer' k vt r = case vt of
-            Render g v -> Render r v
-            x          -> setter (putRenderer' k) x r
+        putRenderer' k' vt' r' = case vt' of
+            Render _ v -> Render r' v
+            x          -> setter (putRenderer' k') x r'
 
 ----------------
 --- EXAMPLES ---
@@ -1159,30 +1164,3 @@ mySetPage = myPage
     & at "page" ?~ "home"
 
 test = (myPage & at "url" ?~ "H!") ^. lookup "url" . _Just . report
-
----------------
--- TESTS
---------------
-
-data Person = Person
-    { _firstName :: T.Text
-    }
-
-firstName :: Valet T.Text Maybe T.Text
-firstName = varchar "firstName" 256
-
-person :: Valet T.Text Maybe Person
-person = Person <$> firstName
-
--- TODO: move the tests to a test suite.
-
-{-|
-Test that a sub-valet is rendered the same way regardless if the key of the
-parent valet is set or not.
--}
-renderSubValetKeySet :: Bool
-renderSubValetKeySet =
-       person' ^. lookup "firstName" . _Just . render
-    == person ^. lookup "firstName" . _Just . render
-    where
-        person' = person & key .~ "HomePage"
