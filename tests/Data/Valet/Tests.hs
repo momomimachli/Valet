@@ -18,6 +18,7 @@ module Data.Valet.Tests
 import Data.Valet
 
 import Control.Lens
+import Data.Monoid()
 import Prelude hiding (lookup)
 import Test.Framework (Test, testGroup)
 import Test.Framework.Providers.HUnit (testCase)
@@ -54,6 +55,7 @@ person = Person <$> firstName
 testLaw1 :: Test
 testLaw1 = testGroup "Lens Law 1"
     [ keyLensLaw1
+    , showValueFuncLensLaw1
     ]
 
 -- | Lens law one for 'key'.
@@ -65,6 +67,18 @@ keyLensLaw1 = testCase "Lens law 1 for key"
       (person' ^. key)
     where
         person' = person & key .~ "test"
+
+-- | Lens law one for 'showValueFunc'.
+showValueFuncLensLaw1 :: Test
+showValueFuncLensLaw1 = testCase "Lens law 1 for showValueFunc"
+    $ assertEqual
+      "Lens law 1 does not hold for showValueFunc"
+      (valueFunc julius)
+      ((person' ^. showValueFunc) julius)
+    where
+        julius = Person "Julius"
+        valueFunc p = _firstName p
+        person' = person & showValueFunc .~ valueFunc
 
 --------------------------------------------------------------------------------
 -- Key or no key set at the top level

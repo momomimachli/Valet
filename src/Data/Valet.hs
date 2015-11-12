@@ -557,6 +557,7 @@ Set a function which converts the value of the 'Valet' to 'Text'.
 -}
 setShowValue :: Valet r m a -> (a -> T.Text) -> Valet r m a
 setShowValue (Value x) g       = ShowValue g (Value x)
+setShowValue (Apply h v) g     = ShowValue g (Apply h v)
 setShowValue (ShowValue _ v) g = ShowValue g v
 setShowValue v x               = setter setShowValue v x
 
